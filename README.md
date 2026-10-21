@@ -20,10 +20,6 @@ watching a real folder. You can also open **`git-from-the-inside-out.html`** you
 > Needs for the Live repo page only: [Node.js](https://nodejs.org) 18 or newer and Git on the PATH.
 > `start-website.bat` is for Windows. On macOS or Linux run `node git-watch.js` in this folder.
 
-A hosted copy (private, shared from its page's Share menu) is at
-<https://claude.ai/artifact/5ZLB1zr95GEaCkGyiZbAhJ>. It has everything except the real-folder mode, because a
-hosted page cannot talk to a program on your computer.
-
 ## What is on the site
 
 | Page | What it gives you |
