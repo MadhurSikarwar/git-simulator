@@ -225,10 +225,24 @@ li.headline b { color: var(--repo); font-family: var(--font-mono); } li.headline
 .graph-scroll { overflow-x: auto; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface-2); padding: .3rem; }
 .g-empty { padding: 1.4rem 1rem; text-align: center; color: var(--ink-3); font-size: .88rem; }
 .gsvg-el { display: block; }
-.g-edge { fill: none; stroke: var(--ink-3); stroke-width: 2; opacity: .8; } .g-edge.second { stroke-dasharray: 5 4; }
-.g-node { cursor: pointer; outline: none; } .g-dot { stroke: var(--surface-2); stroke-width: 2.5; } .g-node.sel .g-dot, .g-node:focus-visible .g-dot { stroke: var(--ink); stroke-width: 3; }
+.lane-0 { --lc: var(--repo); } .lane-1 { --lc: var(--idx); } .lane-2 { --lc: var(--wd); } .lane-3 { --lc: var(--accent); }
+.lane-4 { --lc: #8a4fc4; } .lane-5 { --lc: var(--good); } .lane-6 { --lc: #1b8fb8; } .lane-7 { --lc: #c2457f; }
+.g-edge { fill: none; stroke: var(--lc, var(--ink-3)); stroke-width: 2.5; opacity: .9; stroke-linecap: round; } .g-edge.second { stroke-dasharray: 5 4; } .g-edge.join { stroke-width: 2.5; }
+.g-rail { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 6; }
+.gsvg { display: flex; } .gsvg-el { flex: none; }
+.g-sticky { position: sticky; left: 0; z-index: 3; flex: none; background: linear-gradient(90deg, var(--surface-2) 78%, transparent); pointer-events: none; }
+.g-lane { position: absolute; left: 8px; max-width: 104px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 11px/18px var(--font-mono); color: var(--lc); background: var(--surface); border: 1px solid var(--lc); border-radius: 99px; padding: 0 .55rem; }
+.g-ff { fill: var(--surface-2); stroke: var(--lc); stroke-width: 2.5; } .g-ffl { font: 600 10px var(--font-body); fill: var(--ink-3); letter-spacing: .02em; }
+.g-ffn.fresh { animation: pop .55s ease-out; transform-box: fill-box; transform-origin: center; }
+.g-band { fill: color-mix(in srgb, var(--lc) 7%, transparent); stroke: color-mix(in srgb, var(--lc) 18%, transparent); stroke-width: 1; }
+.g-legend { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem 1.1rem; margin: .75rem .2rem 0; font-size: .78rem; color: var(--ink-2); }
+.lg { display: inline-flex; align-items: center; gap: .4rem; } .lg-note { flex-basis: 100%; color: var(--ink-3); font-size: .76rem; max-width: 95ch; }
+.lg-dot, .lg-merge { width: 12px; height: 12px; border-radius: 50%; background: var(--repo); } .lg-merge { box-shadow: inset 0 0 0 3.5px var(--surface-2), inset 0 0 0 4px var(--repo); }
+.lg-ff { width: 10px; height: 10px; transform: rotate(45deg); border: 2px solid var(--repo); background: var(--surface-2); margin: 0 1px; } .lg-head { width: 14px; height: 14px; border-radius: 50%; border: 2.5px solid var(--accent); }
+.g-node { cursor: pointer; outline: none; } .g-dot { fill: var(--lc, var(--repo)); stroke: var(--surface); stroke-width: 2.5; filter: drop-shadow(0 1px 1.5px rgba(20, 30, 50, .3)); transform-box: fill-box; transform-origin: center; transition: transform .15s; } .g-node:hover .g-dot, .g-node:focus-visible .g-dot { transform: scale(1.2); } .g-node.sel .g-dot, .g-node:focus-visible .g-dot { stroke: var(--ink); stroke-width: 3; }
 .g-ring { fill: none; stroke: var(--accent); stroke-width: 2.5; } .g-merge { fill: var(--surface-2); }
 .g-hash { font: 600 11px var(--font-mono); fill: var(--ink); } .g-msg { font: 11px var(--font-body); fill: var(--ink-2); }
+.g-hash, .g-msg, .g-ffl { paint-order: stroke; stroke: var(--surface-2); stroke-width: 3.5px; stroke-linejoin: round; }
 .g-pill rect { fill: var(--surface); stroke: var(--ink-3); stroke-width: 1.2; } .g-pill text { font: 600 11px var(--font-mono); fill: var(--ink); }
 .g-pill.head rect { fill: var(--accent); stroke: var(--accent); } .g-pill.head text { fill: var(--accent-ink); }
 .g-pill.tag rect { fill: var(--warn-bg); stroke: var(--warn); }
@@ -3662,75 +3676,209 @@ class AreasView {
 }
 
 /* ================================================================== GraphView */
+/* Where was each commit made? A commit does not record its branch, but the HEAD reflog records every
+   "checkout: moving from A to B" and every commit, so replaying it tells us. entries: oldest first, [{h, m}] */
+function reflogMeta(entries, headBranch, branchNames) {
+  const born = {}, ff = [], pending = [], pendingFF = [];
+  let cur = null, prev = null;
+  const isHash = s => /^[0-9a-f]{7,40}$/.test(s) && !(branchNames && branchNames.indexOf(s) >= 0);
+  for (const e of entries) {
+    const m = e.m; let x;
+    if ((x = /^checkout: moving from (\S+) to (\S+)$/.exec(m))) {
+      if (cur === null) { const from = isHash(x[1]) ? '(detached)' : x[1]; pending.forEach(h => { born[h] = from; }); pendingFF.forEach(f => { f.into = from; }); pending.length = 0; pendingFF.length = 0; }
+      cur = isHash(x[2]) ? '(detached)' : x[2];
+    } else if (/^(commit|cherry-pick|revert)\b/.test(m) || /^merge .+: Merge made by/.test(m)) {
+      if (cur) born[e.h] = cur; else pending.push(e.h);
+    } else if ((x = /^merge (.+): Fast-forward$/.exec(m))) {
+      const f = { into: cur, from: x[1], h: e.h, old: prev }; ff.push(f); if (!cur) pendingFF.push(f);
+    }
+    prev = e.h;
+  }
+  if (cur === null && headBranch) { pending.forEach(h => { born[h] = headBranch; }); pendingFF.forEach(f => { f.into = headBranch; }); }
+  return { born, ff: ff.filter(f => f.into) };
+}
+function graphMeta(sim) {
+  if (sim.meta) return sim.meta;
+  const g = sim.s.git; if (!g) return { born: {}, ff: [] };
+  return reflogMeta(g.reflog.map(r => ({ h: r.hash, m: r.msg })), sim.branchName(), sim.branches());
+}
+/* Pure layout: which lane (branch) every commit sits on, and where fast-forward merges happened. */
+function graphLayout(sim) {
+  const g = sim.s.git; if (!g) return null;
+  const tips = sim.allTips(); if (!tips.length) return null;
+  const order = sim.orderCommits(tips); const set = new Set(order);
+  const meta = graphMeta(sim);
+  const gen = {};
+  for (let i = order.length - 1; i >= 0; i--) {
+    const h = order[i]; const ps = sim.obj(h).data.parents.filter(p => set.has(p));
+    gen[h] = ps.length ? 1 + Math.max.apply(null, ps.map(p => (gen[p] == null ? 0 : gen[p]))) : 0;
+  }
+  const lab = {};
+  for (const h of order) if (meta.born[h]) lab[h] = meta.born[h];
+  const base = ['main', 'master'].find(b => g.refs['refs/heads/' + b]);
+  const walk = (tip, name) => { let h = tip; const seen = new Set(); while (h && set.has(h) && !seen.has(h)) { seen.add(h); if (lab[h] === undefined) lab[h] = name; h = sim.obj(h).data.parents[0]; } };
+  if (base) walk(g.refs['refs/heads/' + base], base);
+  for (const b of sim.branches()) walk(g.refs['refs/heads/' + b], b);
+  const hh = sim.headHash(); if (hh && set.has(hh) && lab[hh] === undefined) walk(hh, g.head.ref ? sim.branchName() : '(detached)');
+  for (const h of order) if (lab[h] === undefined) walk(h, '#' + h.slice(0, 7));
+  const names = [], laneOf = {};
+  const ensure = n => { if (laneOf[n] === undefined) { laneOf[n] = names.length; names.push(n); } };
+  if (base) ensure(base);
+  for (let i = order.length - 1; i >= 0; i--) ensure(lab[order[i]]);
+  const ffs = meta.ff.filter(e => set.has(e.h) && e.into && lab[e.h] !== e.into);
+  for (const e of ffs) ensure(e.into);
+  const ffAt = {}; for (const e of ffs) (ffAt[e.h] = ffAt[e.h] || []).push(e);
+  return { order, set, gen, lab, names, laneOf, ffs, ffAt, maxGen: Math.max.apply(null, Object.values(gen)) };
+}
+
 class GraphView {
   constructor(root, ws, o = {}) {
     this.root = root; this.ws = ws; this.o = Object.assign({ detail: true, onOpen: null }, o);
-    this.sel = null; this.lastCount = 0; this.f = U.fresher();
+    this.sel = null; this.lastCount = 0; this.lastW = 0; this.f = U.fresher();
     root.classList.add('graph-view');
-    root.innerHTML = `<div class="graph-scroll"><div class="gsvg"></div></div>${this.o.detail ? '<div class="commit-detail"></div>' : ''}`;
+    root.innerHTML = `<div class="graph-scroll"><div class="gsvg"></div></div><div class="g-legend" hidden></div>${this.o.detail ? '<div class="commit-detail"></div>' : ''}`;
     root.addEventListener('click', e => {
       const n = e.target.closest('[data-commit]'); if (n) { this.sel = n.getAttribute('data-commit'); this.render(null, 'sync'); if (this.o.onSelect) this.o.onSelect(this.sel); }
       const op = e.target.closest('[data-open]'); if (op && this.o.onOpen) this.o.onOpen(op.getAttribute('data-open'));
     });
     ws.on((res, kind) => { if (kind === 'reset') { this.f.forget(); this.sel = null; this.lastCount = 0; } this.render(res, kind); });
+    // the graph measures its panel and tightens its spacing as commits are added, so it keeps fitting
+    if (typeof ResizeObserver !== 'undefined') {
+      this.ro = new ResizeObserver(() => {
+        const w = this.root.clientWidth;
+        if (Math.abs(w - this.lastW) < 6) return;
+        this.lastW = w; cancelAnimationFrame(this.raf); this.raf = requestAnimationFrame(() => this.render(null, 'fit'));
+      });
+      this.ro.observe(root);
+    }
     this.render(null, 'sync');
   }
-  layout() {
-    const sim = this.ws.sim, g = sim.s.git;
-    if (!g) return null;
-    const tips = sim.allTips(); if (!tips.length) return null;
-    const order = sim.orderCommits(tips);
-    const gen = {};
-    for (let i = order.length - 1; i >= 0; i--) { const h = order[i]; const ps = sim.obj(h).data.parents; gen[h] = ps.length ? 1 + Math.max(...ps.map(p => (gen[p] == null ? 0 : gen[p]))) : 0; }
-    const lane = {}; let next = 1;
-    const walk = (h, ln) => { while (h && lane[h] === undefined) { lane[h] = ln; h = sim.obj(h).data.parents[0]; } };
-    const base = ['main', 'master'].find(b => g.refs['refs/heads/' + b]);
-    const first = base ? g.refs['refs/heads/' + base] : sim.headHash();
-    walk(first, 0);
-    for (const b of sim.branches()) { const t = g.refs['refs/heads/' + b]; if (lane[t] === undefined) { walk(t, next++); } }
-    const hh = sim.headHash(); if (hh && lane[hh] === undefined) walk(hh, next++);
-    for (const h of order) if (lane[h] === undefined) walk(h, next++);
-    return { order, gen, lane, lanes: Math.max(...Object.values(lane)) + 1, maxGen: Math.max(...Object.values(gen)) };
-  }
   render(res, kind) {
-    const sim = this.ws.sim; const L = this.layout();
-    const box = U.$('.gsvg', this.root);
+    const sim = this.ws.sim; const L = graphLayout(sim);
+    const box = U.$('.gsvg', this.root); const legend = U.$('.g-legend', this.root); const scroller = U.$('.graph-scroll', this.root);
     this.f.begin();
     if (!L) {
       box.innerHTML = `<div class="g-empty">${sim.s.git ? 'No commits yet. Your first <code>git commit</code> will appear here as a circle.' : 'No repository yet.'}</div>`;
+      legend.hidden = true;
       const d = U.$('.commit-detail', this.root); if (d) d.innerHTML = '';
       this.f.end(); this.lastCount = 0; return;
     }
-    const g = sim.s.git; const X0 = 64, DX = 108, DY = 92;
-    const labelsAt = {}; let maxLab = 1;
-    for (const h of L.order) { const d = sim.decorations(h); labelsAt[h] = d; maxLab = Math.max(maxLab, d.length); }
-    const TOP = 18 + maxLab * 26;
-    const W = X0 * 2 + L.maxGen * DX, H = TOP + (L.lanes - 1) * DY + 78;
-    const pos = h => ({ x: X0 + L.gen[h] * DX, y: TOP + L.lane[h] * DY });
-    let edges = '', nodes = '', pills = '';
+    const g = sim.s.git; const multi = L.names.length > 1; const nl = L.names.length;
+    /* ---- sizing: fit the panel; spacing shrinks as the history grows, labels thin out, scrolling is the last resort */
+    const avail = scroller.clientWidth > 60 ? scroller.clientWidth - 10 : 900;
+    const LG = multi ? Math.round(Math.min(118, Math.max(84, avail * 0.15))) : 0;
+    const X0 = LG + 62;
+    const fit = (avail - X0 - 70) / (L.maxGen + 0.5);
+    const DX = Math.max(26, Math.min(112, fit));
+    const tiny = DX < 62, wide = DX >= 70;
+    const R = DX < 40 ? 5.5 : tiny ? 6.5 : 9, K = Math.min(56, DX * 0.5);
+    const lane = h => L.laneOf[L.lab[h]];
+    const cls = li => 'lane-' + (li % 8);
     const hh = sim.headHash();
-    for (const h of L.order) {
-      const c = sim.obj(h).data; const p = pos(h);
-      c.parents.forEach((ph, i) => {
-        const q = pos(ph);
-        const d = p.y === q.y ? `M${p.x - 10} ${p.y} L${q.x + 10} ${q.y}` : `M${p.x - 9} ${p.y + (q.y > p.y ? 6 : -6)} C${p.x - 56} ${p.y} ${q.x + 56} ${q.y} ${q.x + 9} ${q.y + (q.y > p.y ? -6 : 6)}`;
-        edges += `<path class="g-edge${i ? ' second' : ''}${this.f.cls('e:' + h + ph)}" d="${d}"/>`;
-      });
-      const isHead = h === hh, merge = c.parents.length > 1, sel = h === this.sel;
-      nodes += `<g class="g-node${merge ? ' merge' : ''}${isHead ? ' head' : ''}${sel ? ' sel' : ''}${this.f.cls('n:' + h)}" data-commit="${h}" tabindex="0" role="button" aria-label="Commit ${short(h)}: ${esc(c.message.split('\n')[0])}">
-        ${isHead ? `<circle class="g-ring" cx="${p.x}" cy="${p.y}" r="15"/>` : ''}<circle class="g-dot" cx="${p.x}" cy="${p.y}" r="9" style="fill:${hashColor(c.tree)}"/>${merge ? `<circle class="g-merge" cx="${p.x}" cy="${p.y}" r="4"/>` : ''}
-        <text class="g-hash" x="${p.x}" y="${p.y + 28}" text-anchor="middle">${short(h)}</text>
-        <text class="g-msg" x="${p.x}" y="${p.y + 43}" text-anchor="middle">${esc(c.message.split('\n')[0].slice(0, 17) + (c.message.split('\n')[0].length > 17 ? '…' : ''))}</text></g>`;
-      const labs = labelsAt[h];
-      labs.forEach((lb, i) => {
-        const w = Math.max(34, lb.text.length * 6.9 + 16); const y = p.y - 26 - i * 26;
-        pills += `<g class="g-pill ${lb.kind}${this.f.cls('l:' + h + lb.text)}"><rect x="${p.x - w / 2}" y="${y - 12}" width="${w}" height="20" rx="10"/><text x="${p.x}" y="${y + 2}" text-anchor="middle">${esc(lb.text)}</text></g>`;
-      });
+    /* ---- labels (branch names, HEAD, tags): above their commit, or above the diamond when the branch got there by fast-forward */
+    const anchorOf = (h, d) => {
+      if (d.kind === 'branch' || d.kind === 'head') {
+        const name = d.kind === 'branch' ? d.text : (/^HEAD -> (.+)$/.exec(d.text) || [])[1];
+        if (name && L.ffAt[h] && g.refs['refs/heads/' + name] === h) { const e = L.ffAt[h].find(x => x.into === name); if (e) return { key: 'd:' + h + ':' + name, e }; }
+      }
+      return { key: 'n:' + h, e: null };
+    };
+    const groups = {};
+    for (const h of L.order) for (const d of sim.decorations(h)) { const a = anchorOf(h, d); (groups[a.key] = groups[a.key] || { h, e: a.e, list: [] }).list.push(d); }
+    let headDiamond = null;
+    for (const key of Object.keys(groups)) if (groups[key].e && groups[key].list.some(d => d.kind === 'head')) headDiamond = groups[key].e;
+    const items = [];
+    for (const key of Object.keys(groups)) {
+      const gr = groups[key];
+      const x = X0 + L.gen[gr.e ? gr.e.h : gr.h] * DX + (gr.e ? DX / 2 : 0);
+      const ln = gr.e ? L.laneOf[gr.e.into] : lane(gr.h);
+      gr.list.forEach(lb => items.push({ x, ln, lb, key, w: Math.max(34, lb.text.length * 6.9 + 16) }));
     }
-    box.innerHTML = `<svg class="gsvg-el" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Commit graph with ${L.order.length} commits">${edges}${nodes}${pills}</svg>`;
+    items.sort((a, b) => a.x - b.x);
+    const placed = {}; let lvl0 = 0, lvlN = 0;
+    for (const it of items) {                      // labels that would overlap are stacked, never printed on top of each other
+      const list = placed[it.ln] = placed[it.ln] || []; let lv = 0;
+      while (list.some(p => p.lv === lv && it.x - it.w / 2 < p.x1 + 5 && it.x + it.w / 2 > p.x0 - 5)) lv++;
+      it.lv = lv; list.push({ lv, x0: it.x - it.w / 2, x1: it.x + it.w / 2 });
+      if (it.ln === 0) lvl0 = Math.max(lvl0, lv); else lvlN = Math.max(lvlN, lv);
+    }
+    const TOP = 22 + (lvl0 + 1) * 26;
+    const DY = (tiny ? 64 : nl <= 3 ? 92 : 82) + lvlN * 24;
+    let right = X0 + L.maxGen * DX + 70;
+    for (const e of L.ffs) right = Math.max(right, X0 + L.gen[e.h] * DX + DX / 2 + 46);
+    for (const it of items) right = Math.max(right, it.x + it.w / 2 + 14);
+    const W = Math.ceil(right), H = Math.ceil(TOP + (nl - 1) * DY + (tiny ? 44 : 72));
+    const np = h => ({ x: X0 + L.gen[h] * DX, y: TOP + lane(h) * DY });
+    const dp = e => ({ x: np(e.h).x + DX / 2, y: TOP + L.laneOf[e.into] * DY });
+    const path = (a, b) => a.y === b.y ? `M${a.x - R - 1} ${a.y} L${b.x + R + 1} ${b.y}`
+      : a.x === b.x ? `M${a.x} ${a.y + (b.y > a.y ? R + 2 : -R - 2)} L${b.x} ${b.y + (b.y > a.y ? -R - 2 : R + 2)}`
+      : `M${a.x - R} ${a.y + (b.y > a.y ? 5 : -5)} C${a.x - K} ${a.y} ${b.x + K} ${b.y} ${b.x + R} ${b.y + (b.y > a.y ? -5 : 5)}`;
+    const important = new Set(); if (hh) important.add(hh); if (this.sel) important.add(this.sel);
+    for (const key of Object.keys(groups)) important.add(groups[key].h);
+    for (const h of L.order) if (!sim.obj(h).data.parents.length || sim.obj(h).data.parents.length > 1) important.add(h);
+    const maxChars = Math.max(6, Math.min(26, Math.floor((DX - 8) / 6.2)));
+    // when the graph is tight, only some commits get a printed hash: HEAD first, then the selected commit, branch tips,
+    // then merges and the root. A label is skipped if it would touch one already placed in the same row.
+    const labelled = new Set();
+    if (tiny) {
+      const tips = new Set(Object.keys(groups).map(k => groups[k].h));
+      const prio = h => (h === hh ? 0 : h === this.sel ? 1 : tips.has(h) ? 2 : 3);
+      const occ = {};
+      for (const h of [...important].sort((a, b) => prio(a) - prio(b) || L.gen[b] - L.gen[a])) {
+        const x = X0 + L.gen[h] * DX, ln = lane(h); const list = occ[ln] = occ[ln] || [];
+        if (!list.some(px => Math.abs(px - x) < 54)) { list.push(x); labelled.add(h); }
+      }
+    }
+    let bands = '', edges = '', nodes = '', pills = '', gutter = '';
+    L.names.forEach((n, i) => {
+      const y = TOP + i * DY;
+      if (multi) {
+        bands += `<rect class="g-band ${cls(i)}" x="${LG - 4}" y="${y - 30}" width="${W - LG - 6}" height="${tiny ? 54 : 80}" rx="12"/>`;
+        const nm = n.charAt(0) === '#' ? '(other branch)' : n.length > 14 ? n.slice(0, 13) + '…' : n;
+        gutter += `<span class="g-lane ${cls(i)}" style="top:${y - 9}px" title="${esc(n.charAt(0) === '#' ? 'a branch that no longer exists' : n)}">${esc(nm)}</span>`;
+      }
+    });
+    for (const h of L.order) {
+      const c = sim.obj(h).data; const p = np(h); const li = lane(h);
+      c.parents.forEach((ph, i) => {
+        if (!L.set.has(ph)) return;
+        let target = np(ph);
+        const evs = L.ffAt[ph]; const e = evs && evs.find(x => x.into === L.lab[h]);
+        if (e && L.lab[ph] !== e.into) target = dp(e);
+        edges += `<path class="g-edge ${cls(li)}${i ? ' second' : ''}${this.f.cls('e:' + h + ph)}" d="${path(p, target)}"/>`;
+      });
+      const isHead = h === hh && !headDiamond, merge = c.parents.length > 1, sel = h === this.sel;
+      const msg = c.message.split('\n')[0]; const on = L.lab[h].charAt(0) === '#' ? '' : L.lab[h];
+      const showHash = !tiny || labelled.has(h);
+      nodes += `<g class="g-node${merge ? ' merge' : ''}${isHead ? ' head' : ''}${sel ? ' sel' : ''}${this.f.cls('n:' + h)}" data-commit="${h}" tabindex="0" role="button" aria-label="Commit ${short(h)}${on ? ' on ' + esc(on) : ''}: ${esc(msg)}"><title>${short(h)}  ${esc(msg)}${on ? '  (made on ' + esc(on) + ')' : ''}</title>
+        ${isHead ? `<circle class="g-ring" cx="${p.x}" cy="${p.y}" r="${R + 6}"/>` : ''}<circle class="g-dot ${cls(li)}" cx="${p.x}" cy="${p.y}" r="${R}"/>${merge ? `<circle class="g-merge" cx="${p.x}" cy="${p.y}" r="${R * 0.45}"/>` : ''}
+        ${showHash ? `<text class="g-hash" x="${p.x}" y="${p.y + R + 19}" text-anchor="middle">${short(h)}</text>` : ''}
+        ${wide && showHash ? `<text class="g-msg" x="${p.x}" y="${p.y + R + 34}" text-anchor="middle">${esc(msg.length > maxChars ? msg.slice(0, maxChars - 1) + '…' : msg)}</text>` : ''}</g>`;
+    }
+    // fast-forward merges: the receiving branch runs on to a diamond, and the merged branch joins it
+    const DS = tiny ? 8 : 10;
+    for (const e of L.ffs) {
+      const d = dp(e); const src = np(e.h); const into = L.laneOf[e.into];
+      if (e.old && L.set.has(e.old)) edges += `<path class="g-edge ${cls(into)}${this.f.cls('f:' + e.h + e.into)}" d="${path(d, np(e.old))}"/>`;
+      const below = src.y > d.y; const ey = d.y + (below ? DS + 1 : -DS - 1);   // leave the commit sideways, enter the diamond vertically
+      const jd = `M${src.x + R} ${src.y} C${d.x} ${src.y} ${d.x} ${ey + (below ? 44 : -44)} ${d.x} ${ey}`;
+      edges += `<path class="g-edge join ${cls(lane(e.h))}${this.f.cls('j:' + e.h + e.into)}" d="${jd}"/>`;
+      nodes += `<g class="g-ffn ${cls(into)}${this.f.cls('d:' + e.h + e.into)}"><title>${esc(e.into)} was fast-forwarded to ${esc(e.from)}: no new commit, the ${esc(e.into)} label just moved forward</title>
+        ${headDiamond === e ? `<circle class="g-ring" cx="${d.x}" cy="${d.y}" r="${DS + 7}"/>` : ''}<path class="g-ff" d="M${d.x} ${d.y - DS} L${d.x + DS} ${d.y} L${d.x} ${d.y + DS} L${d.x - DS} ${d.y} Z"/>
+        ${tiny ? '' : `<text class="g-ffl" x="${d.x}" y="${d.y + DS + 17}" text-anchor="middle">ff merge</text>`}</g>`;
+    }
+    for (const it of items) {
+      const y = TOP + it.ln * DY - (tiny ? 22 : 26) - it.lv * 26;
+      pills += `<g class="g-pill ${it.lb.kind}${this.f.cls('l:' + it.key + it.lb.text)}"><rect x="${it.x - it.w / 2}" y="${y - 12}" width="${it.w}" height="20" rx="10"/><text x="${it.x}" y="${y + 2}" text-anchor="middle">${esc(it.lb.text)}</text></g>`;
+    }
+    box.innerHTML = (multi ? `<div class="g-sticky" style="width:${LG}px;height:${H}px;margin-right:-${LG}px" aria-hidden="true">${gutter}</div>` : '') + `<svg class="gsvg-el" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Commit graph with ${L.order.length} commits on ${nl} branch lane${nl === 1 ? '' : 's'}">${bands}${edges}${nodes}${pills}</svg>`;
+    legend.hidden = !(multi || L.ffs.length);
+    legend.innerHTML = '<span class="lg"><i class="lg-dot"></i>commit</span><span class="lg"><i class="lg-merge"></i>merge commit (two parents)</span><span class="lg"><i class="lg-ff"></i>fast-forward merge: no new commit, the label just moved</span><span class="lg"><i class="lg-head"></i>HEAD</span><span class="lg-note">Each row is a branch, placed by where the commit was made (Git records that in the reflog). A line leaving a row is a branch starting; a line joining a row is a merge.</span>';
     this.f.end();
-    const scroller = U.$('.graph-scroll', this.root);
-    if (L.order.length !== this.lastCount) { scroller.scrollLeft = scroller.scrollWidth; this.lastCount = L.order.length; }
+    const overflow = W > scroller.clientWidth + 2;
+    if (!overflow) scroller.scrollLeft = 0;
+    else if (L.order.length !== this.lastCount) scroller.scrollLeft = scroller.scrollWidth;
+    this.lastCount = L.order.length;
     this.renderDetail(L);
   }
   renderDetail(L) {
@@ -3739,8 +3887,10 @@ class GraphView {
     let h = this.sel && sim.obj(this.sel) ? this.sel : sim.headHash() || L.order[0];
     const c = sim.obj(h).data; const flat = sim.flatTree(c.tree);
     const au = /^(.*) (\d+) ([+-]\d{4})$/.exec(c.author);
+    const onB = L.lab[h] && L.lab[h].charAt(0) !== '#' ? L.lab[h] : '';
     d.innerHTML = `<div class="cd-row"><span class="cd-k">commit</span><code>${h}</code></div>
       <div class="cd-row"><span class="cd-k">message</span><span class="cd-v">${esc(c.message.trim())}</span></div>
+      ${onB ? `<div class="cd-row"><span class="cd-k">made on</span><span class="cd-v"><code>${esc(onB)}</code></span></div>` : ''}
       <div class="cd-row"><span class="cd-k">parent${c.parents.length === 1 ? '' : 's'}</span><span class="cd-v">${c.parents.length ? c.parents.map(p => `<code>${short(p)}</code>`).join(' + ') : '<i>none: this is the root commit</i>'}</span></div>
       <div class="cd-row"><span class="cd-k">tree</span><code>${short(c.tree)}</code>${au ? `<span class="cd-by">by ${esc(au[1])}</span>` : ''}</div>
       <div class="cd-row"><span class="cd-k">snapshot</span><span class="cd-files">${Object.keys(flat).sort().map(p => `<span class="cd-file" title="blob ${flat[p].hash}">${sw(flat[p].hash)}${esc(p)}</span>`).join('')}</span></div>
@@ -3968,6 +4118,7 @@ class HashPlayground {
 }
 HashPlayground.n = 1;
 
+U.reflogMeta = reflogMeta; U.graphMeta = graphMeta; U.graphLayout = graphLayout;
 U.AreasView = AreasView; U.GraphView = GraphView; U.InspectView = InspectView; U.RefsView = RefsView; U.SnapshotView = SnapshotView; U.HashPlayground = HashPlayground;
 })(GS);
 
@@ -5006,6 +5157,10 @@ U.snapshotFromSim = function (sim, label) {
   const order = sim.allTips().length ? sim.orderCommits(sim.allTips()).slice(0, 300) : [];
   snap.commits = order.map(h => { const c = sim.obj(h).data; const au = /^(.*) <.*> \d+ [+-]\d{4}$/.exec(c.author); return { h, p: c.parents, tree: c.tree, a: au ? au[1] : c.author, t: c.time, s: c.message.split('\n')[0] }; });
   snap.reflog = g.reflog.slice().reverse().slice(0, 15).map(r => ({ h: r.hash, m: r.msg, t: r.ts }));
+  const meta = U.reflogMeta(g.reflog.map(r => ({ h: r.hash, m: r.msg })), sim.branchName(), sim.branches());
+  const known = new Set(snap.commits.map(c => c.h));
+  snap.born = {}; for (const c of snap.commits) if (meta.born[c.h]) snap.born[c.h] = meta.born[c.h];
+  snap.ff = meta.ff.filter(f => known.has(f.h));
   snap.state = g.mergeHead ? 'merging' : null;
   return snap;
 };
@@ -5021,7 +5176,9 @@ function simFromSnapshot(snap) {
   for (const b of snap.branches || []) if (objects[b.hash]) refs['refs/heads/' + b.name] = b.hash;
   for (const t of snap.tags || []) if (objects[t.hash]) refs['refs/tags/' + t.name] = t.hash;
   const head = snap.head && snap.head.ref ? { ref: snap.head.ref } : { hash: snap.head && objects[snap.head.hash] ? snap.head.hash : null };
-  return new GS.Sim({ state: { fs: {}, dirs: [], global: {}, git: { head, refs, objects, index: {}, conflicts: {}, config: {}, reflog: [], seq: n, mergeHead: null, mergeMsg: null, editMsg: null } } });
+  const sim = new GS.Sim({ state: { fs: {}, dirs: [], global: {}, git: { head, refs, objects, index: {}, conflicts: {}, config: {}, reflog: [], seq: n, mergeHead: null, mergeMsg: null, editMsg: null } } });
+  sim.meta = { born: snap.born || {}, ff: snap.ff || [] };   // which branch each commit was made on
+  return sim;
 }
 
 /* ================================================================== what changed between two snapshots */
@@ -5079,6 +5236,7 @@ function diffSnapshots(a, b) {
   return { ev, flow };
 }
 Live.diffSnapshots = diffSnapshots;
+Live.simFromSnapshot = simFromSnapshot;
 
 /* ================================================================== the three areas, from a snapshot */
 class LiveAreas {

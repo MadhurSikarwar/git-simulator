@@ -35,6 +35,28 @@ function runGit(cwd, args, opts = {}) {
 }
 const text = r => r.out.toString('utf8');
 
+/* Where was each commit made? Replays the HEAD reflog (same logic as the page uses for the simulator).
+   entries: oldest first, [{h, m}] */
+function reflogMeta(entries, headBranch, branchNames) {
+  const born = {}, ff = [], pending = [], pendingFF = [];
+  let cur = null, prev = null;
+  const isHash = s => /^[0-9a-f]{7,40}$/.test(s) && !(branchNames && branchNames.indexOf(s) >= 0);
+  for (const e of entries) {
+    const m = e.m; let x;
+    if ((x = /^checkout: moving from (\S+) to (\S+)$/.exec(m))) {
+      if (cur === null) { const from = isHash(x[1]) ? '(detached)' : x[1]; pending.forEach(h => { born[h] = from; }); pendingFF.forEach(f => { f.into = from; }); pending.length = 0; pendingFF.length = 0; }
+      cur = isHash(x[2]) ? '(detached)' : x[2];
+    } else if (/^(commit|cherry-pick|revert)\b/.test(m) || /^merge .+: Merge made by/.test(m)) {
+      if (cur) born[e.h] = cur; else pending.push(e.h);
+    } else if ((x = /^merge (.+): Fast-forward$/.exec(m))) {
+      const f = { into: cur, from: x[1], h: e.h, old: prev }; ff.push(f); if (!cur) pendingFF.push(f);
+    }
+    prev = e.h;
+  }
+  if (cur === null && headBranch) { pending.forEach(h => { born[h] = headBranch; }); pendingFF.forEach(f => { f.into = headBranch; }); }
+  return { born, ff: ff.filter(f => f.into) };
+}
+
 /* files of a folder that is not a repository (so the page can still show the working directory) */
 function plainFiles(folder) {
   const out = [];
@@ -76,7 +98,7 @@ async function snapshot(folder) {
     runGit(root, ['ls-tree', '-r', '-z', 'HEAD']),
     runGit(root, ['for-each-ref', '--format=%(refname)%09%(objectname)%09%(*objectname)', 'refs/heads', 'refs/tags']),
     runGit(root, ['log', '--all', '--max-count=' + MAX_COMMITS, '--date-order', '-z', '--format=%H%x01%P%x01%T%x01%an%x01%ct%x01%s']),
-    runGit(root, ['log', '-g', '-n', '15', '-z', '--format=%H%x01%gs%x01%ct']),
+    runGit(root, ['log', '-g', '-n', '1000', '-z', '--format=%H%x01%gs%x01%ct']),
     runGit(root, ['--version'])
   ]);
   snap.gitVersion = text(ver).trim();
@@ -163,7 +185,11 @@ async function snapshot(folder) {
   rows.forEach(r => known.add(r[0]));
   for (const r of rows) commits.push({ h: r[0], p: (r[1] ? r[1].split(' ') : []).filter(x => known.has(x)), tree: r[2], a: r[3], t: +r[4], s: r[5] });
   snap.commits = commits;
-  snap.reflog = rlog.code === 0 ? text(rlog).split('\0').filter(Boolean).map(r => { const f = r.split('\x01'); return { h: f[0], m: f[1], t: +f[2] }; }) : [];
+  const rl = rlog.code === 0 ? text(rlog).split('\0').filter(Boolean).map(r => { const f = r.split('\x01'); return { h: f[0], m: f[1], t: +f[2] }; }) : [];
+  snap.reflog = rl.slice(0, 15);
+  const meta = reflogMeta(rl.slice().reverse().map(e => ({ h: e.h, m: e.m })), snap.head.branch, branches.map(b => b.name));
+  snap.born = {}; for (const c of commits) if (meta.born[c.h]) snap.born[c.h] = meta.born[c.h];
+  snap.ff = meta.ff.filter(f => known.has(f.h));
   let state = null;
   const has = n => fs.existsSync(path.join(gitDir, n));
   if (has('MERGE_HEAD')) state = 'merging'; else if (has('rebase-merge') || has('rebase-apply')) state = 'rebasing'; else if (has('CHERRY_PICK_HEAD')) state = 'cherry-picking'; else if (has('REVERT_HEAD')) state = 'reverting'; else if (has('BISECT_LOG')) state = 'bisecting';
@@ -316,7 +342,7 @@ function createServer(o = {}) {
   return { server, token, state, listen, close, setFolder, refresh };
 }
 
-module.exports = { createServer, snapshot, fileDiff, commitInfo, runGit };
+module.exports = { createServer, snapshot, fileDiff, commitInfo, runGit, reflogMeta };
 
 /* ---------------------------------------------------------------- command line */
 if (require.main === module) {

@@ -30,7 +30,7 @@ hosted page cannot talk to a program on your computer.
 | --- | --- |
 | **Home** | A live demo of `add` and `commit` moving files between the three places, a hash playground, the 90-minute plan. |
 | **Learn** | Eight chapters from the handout. Six have step-through "stories": real commands on a private repository, narrated, with the pictures changing beside them (Back and Next both work). |
-| **Lab** | The guided exercise: a terminal on the left, the machinery on the right (three places, history graph, `.git` explorer, object database). 15 steps plus 5 optional "Go further" steps. |
+| **Lab** | The guided exercise: a terminal on the left, the machinery on the right (three places, branch-lane history graph, `.git` explorer, object database). 15 steps plus 5 optional "Go further" steps. |
 | **Live repo** | Point the site at a real folder and watch it change as you run `git` in cmd. Also has a scripted **Demo** and a **Mirror the lab** mode that need no setup. |
 | **Reference** | Cheat sheet, "I want to…" lookup, `git status -s` codes, every error from the session decoded (with *Try it*), Windows PowerShell traps, glossary. A filter box searches all of it. |
 | **Practice** | A quick check (8 questions with explanations) and the 10 handout exercises with reveal-the-answer. |
@@ -83,7 +83,11 @@ What you see, updating on its own:
 * **What just changed**: a feed such as "index.html staged (git add)" or "Committed 597588b". The arrows between the
   three places light up to match. **Recent HEAD moves** comes from `git reflog`.
 * **Diff**: click any file for its unstaged diff, staged diff, or diff against the last commit.
-* **History**: a real commit graph with branch and tag labels. Click a commit to see the files it changed.
+* **History**: a branch-lane graph. Each branch gets its own row, placed by where each commit was made (Git records
+  that in the reflog), so you see a branch fork off, do its work, and join back. A real merge commit shows its two
+  parents meeting; a fast-forward merge (which creates no commit) shows as a ◇ where the branch line joins.
+  The graph fits its panel: as commits are added the spacing tightens (labels thin out, hashes of HEAD and branch tips
+  stay), and it only scrolls when it is truly crowded. Click a commit to see the files it changed.
 
 Safety:
 
@@ -149,6 +153,7 @@ node test/lab.test.js        # all 15 steps complete from their solutions     (5
 node test/stories.test.js    # every scripted story command succeeds          (60)
 node test/server.test.js     # the live helper against real git               (40)
 node test/live.test.js       # simulator vs real git, step by step            (137)
+node test/graph.test.js      # branch lanes, fast-forward and real merges     (16)
 ```
 
 The server and live tests create temporary repositories with the real `git` on your PATH.

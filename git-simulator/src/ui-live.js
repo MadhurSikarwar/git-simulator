@@ -44,6 +44,10 @@ U.snapshotFromSim = function (sim, label) {
   const order = sim.allTips().length ? sim.orderCommits(sim.allTips()).slice(0, 300) : [];
   snap.commits = order.map(h => { const c = sim.obj(h).data; const au = /^(.*) <.*> \d+ [+-]\d{4}$/.exec(c.author); return { h, p: c.parents, tree: c.tree, a: au ? au[1] : c.author, t: c.time, s: c.message.split('\n')[0] }; });
   snap.reflog = g.reflog.slice().reverse().slice(0, 15).map(r => ({ h: r.hash, m: r.msg, t: r.ts }));
+  const meta = U.reflogMeta(g.reflog.map(r => ({ h: r.hash, m: r.msg })), sim.branchName(), sim.branches());
+  const known = new Set(snap.commits.map(c => c.h));
+  snap.born = {}; for (const c of snap.commits) if (meta.born[c.h]) snap.born[c.h] = meta.born[c.h];
+  snap.ff = meta.ff.filter(f => known.has(f.h));
   snap.state = g.mergeHead ? 'merging' : null;
   return snap;
 };
@@ -59,7 +63,9 @@ function simFromSnapshot(snap) {
   for (const b of snap.branches || []) if (objects[b.hash]) refs['refs/heads/' + b.name] = b.hash;
   for (const t of snap.tags || []) if (objects[t.hash]) refs['refs/tags/' + t.name] = t.hash;
   const head = snap.head && snap.head.ref ? { ref: snap.head.ref } : { hash: snap.head && objects[snap.head.hash] ? snap.head.hash : null };
-  return new GS.Sim({ state: { fs: {}, dirs: [], global: {}, git: { head, refs, objects, index: {}, conflicts: {}, config: {}, reflog: [], seq: n, mergeHead: null, mergeMsg: null, editMsg: null } } });
+  const sim = new GS.Sim({ state: { fs: {}, dirs: [], global: {}, git: { head, refs, objects, index: {}, conflicts: {}, config: {}, reflog: [], seq: n, mergeHead: null, mergeMsg: null, editMsg: null } } });
+  sim.meta = { born: snap.born || {}, ff: snap.ff || [] };   // which branch each commit was made on
+  return sim;
 }
 
 /* ================================================================== what changed between two snapshots */
@@ -117,6 +123,7 @@ function diffSnapshots(a, b) {
   return { ev, flow };
 }
 Live.diffSnapshots = diffSnapshots;
+Live.simFromSnapshot = simFromSnapshot;
 
 /* ================================================================== the three areas, from a snapshot */
 class LiveAreas {

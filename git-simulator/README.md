@@ -1,3 +1,5 @@
+> Project overview, quick start and troubleshooting: see `../README.md`. This file is the developer notes.
+
 # Git, from the inside out: interactive lab site
 
 One self-contained HTML site (no server, no install, works offline) built from the handout
